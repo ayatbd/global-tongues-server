@@ -3,6 +3,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -35,11 +36,9 @@ const verifyJWT = (req, res, next) => {
 
 // ---------------------------
 
-// globalTongues;
-// QCp3weSjcdasRwNO;
+const uri = `mongodb+srv://${process.env.USER_DB}:${process.env.USER_PASS}@cluster0.y1sglpm.mongodb.net/?retryWrites=true&w=majority`;
 
-const uri = `mongodb+srv://globalTongues:QCp3weSjcdasRwNO@cluster0.y1sglpm.mongodb.net/?retryWrites=true&w=majority`;
-
+console.log(process.env.USER_DB);
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -64,20 +63,38 @@ async function run() {
 run().catch(console.dir);
 
 // ---------------------------
+app.post("/create-payment-intent", async (req, res) => {
+  const { price } = req.body;
+  const ammount = price * 100;
+
+  // Create a PaymentIntent with the order amount and currency
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: ammount,
+    currency: "usd",
+
+    payment_method_types: ["card"],
+  });
+
+  res.send({
+    clientSecret: paymentIntent.client_secret,
+  });
+});
+
+// ---------------------------
 
 app.get("/", (req, res) => {
   res.send("web server is running");
 });
 
-const usersCollection = client.db("gtDb").collection("users");
-const classCollection = client.db("gtDb").collection("class");
-const selectCollection = client.db("gtDb").collection("select");
+const usersCollection = client.db("campDb").collection("users");
+const classCollection = client.db("campDb").collection("class");
+const selectCollection = client.db("campDb").collection("select");
 
 // JWT TOKEN
 
 app.post("/jwt", (req, res) => {
   const user = req.body;
-  const token = jwt.sign(quser, process.env.ACCESS_TOKEN_SECRET, {
+  const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
     expiresIn: "1h",
   });
 
@@ -125,6 +142,24 @@ app.get("/users/student/:email", verifyJWT, async (req, res) => {
   res.send(result);
 });
 
+// selected classes apis
+app.get("/SelectedClassess", verifyJWT, async (req, res) => {
+  const email = req.query.email;
+
+  if (!email) {
+    res.send([]);
+  }
+
+  const decodedEmail = req.decoded.email;
+  if (email !== decodedEmail) {
+    return res.status(403).send({ error: true, message: "forbidden access" });
+  }
+
+  const query = { email: email };
+  const result = await classCollection.find(query).toArray();
+  res.send(result);
+});
+
 // selected class api
 
 app.get("/select", async (req, res) => {
@@ -145,8 +180,21 @@ app.post("/select", async (req, res) => {
 app.delete("/select/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
-  const result = await selectCollection.deleteOne(query);
-  res.send(result);
+
+  try {
+    const result = await selectCollection.deleteOne(query);
+
+    if (result.deletedCount === 1) {
+      res
+        .status(200)
+        .json({ deletedCount: 1, message: "Document deleted successfully" });
+    } else {
+      res.status(404).json({ deletedCount: 0, message: "Document not found" });
+    }
+  } catch (error) {
+    console.error("Error deleting document:", error);
+    res.status(500).json({ deletedCount: 0, error: "Internal server error" });
+  }
 });
 
 // users apis
@@ -196,6 +244,21 @@ app.delete("/class/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const result = await classCollection.deleteOne(query);
+  res.send(result);
+});
+
+// ----------------------------------
+// backend class approve api
+app.patch("/class/approve/:id", async (req, res) => {
+  const id = req.params.id;
+  const filter = { _id: new ObjectId(id) };
+  const updateDoc = {
+    $set: {
+      status: "approved", // <-- Fix the typo here
+    },
+  };
+
+  const result = await classCollection.updateOne(filter, updateDoc);
   res.send(result);
 });
 
